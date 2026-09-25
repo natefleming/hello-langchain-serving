@@ -4,7 +4,7 @@ A minimal, end-to-end demo: a **no-tools LangChain agent** deployed to **Databri
 Model Serving**, with **MLflow tracing written to Unity Catalog OpenTelemetry tables**
 so every inference is queryable in SQL within seconds.
 
-Built for learning — small on purpose. It uses only current MLflow 3.10 / LangChain 1.x
+Built for learning — small on purpose. It uses only current MLflow 3.16 / LangChain 1.4
 APIs (no deprecated calls).
 
 ## What it demonstrates
@@ -13,8 +13,11 @@ APIs (no deprecated calls).
 - The MLflow **agent-as-code** pattern (`mlflow.models.set_model`), served through a thin
   `ResponsesAgent` wrapper.
 - **Automatic tracing** via `mlflow.langchain.autolog()`.
-- Traces routed to **UC OTel tables** with `mlflow.tracing.set_destination(UCSchemaLocation(...))`,
-  provisioned/linked once with `mlflow.tracing.set_experiment_trace_location(...)`.
+- Traces stored in **UC OTel tables** by binding the experiment to a `UnityCatalog` trace
+  location — `mlflow.set_experiment(trace_location=UnityCatalog(...))` (the current
+  Databricks-recommended approach; the older `set_destination(UCSchemaLocation)` is
+  deprecated). Binding provisions four Delta tables:
+  `hello_langchain_otel_{spans,logs,metrics,annotations}`.
 
 ## Layout
 
@@ -36,12 +39,13 @@ Everything is set in `config.py`. Defaults target the FEVM workspace:
 ## Run it
 
 ```bash
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 1. Log, register, and deploy (a few minutes to become READY)
 DATABRICKS_CONFIG_PROFILE=fevm python deploy.py
 
-# 2. Validate: live inference + confirm the trace lands in the OTel table
+# 2. Validate: UC-binding check + live inference + confirm the trace lands in the OTel table
 DATABRICKS_CONFIG_PROFILE=fevm python validate.py
 ```
 
@@ -57,10 +61,12 @@ SP authenticates both the LLM call and the trace writes to the OTel tables.
 
 ## Query the traces
 
+`attributes` is a VARIANT column, so render it with `to_json(...)` (or use `attributes:field`):
+
 ```sql
-SELECT trace_id, name, status.code AS status, attributes,
-       CAST(start_time_unix_nano / 1e9 AS TIMESTAMP) AS start_time
-FROM retail_consumer_goods.agent_ops_traces.mlflow_experiment_trace_otel_spans
-ORDER BY start_time DESC
+SELECT trace_id, name, status.code AS status,
+       to_json(attributes) AS attributes, time
+FROM retail_consumer_goods.agent_ops_traces.hello_langchain_otel_spans
+ORDER BY time DESC
 LIMIT 20;
 ```

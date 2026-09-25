@@ -5,9 +5,10 @@ Run against the FEVM workspace:
     DATABRICKS_CONFIG_PROFILE=fevm python deploy.py
 
 Steps:
-  1. Point MLflow at the Databricks workspace + UC registry, and select the experiment.
-  2. Provision the UC OpenTelemetry trace tables and link them to the experiment
-     (idempotent — a re-run just reuses the existing link).
+  1. Point MLflow at the Databricks workspace + UC registry.
+  2. Create (or reuse) the experiment bound to a Unity Catalog trace location — this
+     provisions the OTel Delta tables. A UC trace location is permanent, so the
+     experiment is verified rather than reassigned.
   3. Log ``agent.py`` with the models-from-code pattern.
   4. Register the logged model to Unity Catalog.
   5. Deploy it to a Model Serving endpoint with plain serving, running as an existing
@@ -16,21 +17,25 @@ Steps:
 
 from __future__ import annotations
 
+import os
+
 import mlflow
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedEntityInput
-from mlflow.entities.trace_location import UCSchemaLocation
-from mlflow.exceptions import MlflowException
+from mlflow.entities.trace_location import UnityCatalog
 from mlflow.types.responses import RESPONSES_AGENT_INPUT_EXAMPLE
 
 import config
 
 PIP_REQUIREMENTS: list[str] = [
-    "mlflow==3.10.1",
-    "databricks-langchain==0.19.0",
-    "langchain==1.2.15",
-    "langgraph==1.1.6",
+    "mlflow==3.16.1",
+    "databricks-langchain==0.20.0",
+    "langchain==1.4.2",
+    "langgraph==1.2.12",
 ]
+
+# Required so MLflow can provision/query the UC trace tables.
+os.environ["MLFLOW_TRACING_SQL_WAREHOUSE_ID"] = config.WAREHOUSE_ID
 
 
 def _secret(key: str) -> str:
@@ -46,21 +51,37 @@ SERVING_ENV_VARS: dict[str, str] = {
 }
 
 
-def link_trace_tables(experiment_id: str) -> None:
-    """Provision the UC OTel tables and link them to the experiment (idempotent)."""
-    location = UCSchemaLocation(
-        catalog_name=config.TRACE_CATALOG, schema_name=config.TRACE_SCHEMA
+def ensure_uc_experiment() -> None:
+    """Create or reuse the experiment bound to the UC trace location, then select it.
+
+    A UC trace location is permanent, so an existing experiment is verified to match
+    rather than reassigned (a mismatch is a hard error, per MLflow guidance).
+    """
+    location = UnityCatalog(
+        catalog_name=config.TRACE_CATALOG,
+        schema_name=config.TRACE_SCHEMA,
+        table_prefix=config.TABLE_PREFIX,
     )
-    try:
-        result = mlflow.tracing.set_experiment_trace_location(
-            location=location,
-            experiment_id=experiment_id,
-            sql_warehouse_id=config.WAREHOUSE_ID,
+    experiment = mlflow.get_experiment_by_name(config.EXPERIMENT_PATH)
+    if experiment is None:
+        experiment_id = mlflow.create_experiment(
+            config.EXPERIMENT_PATH, trace_location=location
         )
-        print(f"Linked trace tables: {result.full_otel_spans_table_name}")
-    except MlflowException as exc:
-        # Re-running deploy.py hits "already linked" — that is the desired state.
-        print(f"Trace location already configured ({exc}); continuing.")
+        experiment = mlflow.get_experiment(experiment_id)
+        print(f"Created experiment bound to {experiment.trace_location.full_otel_spans_table_name}")
+    else:
+        bound = experiment.trace_location
+        if not isinstance(bound, UnityCatalog) or (
+            bound.catalog_name,
+            bound.schema_name,
+        ) != (config.TRACE_CATALOG, config.TRACE_SCHEMA):
+            raise RuntimeError(
+                f"Experiment {config.EXPERIMENT_PATH} is bound to {bound}, not the "
+                f"expected UC location {config.TRACE_CATALOG}.{config.TRACE_SCHEMA}."
+            )
+        print(f"Reusing experiment bound to {bound.full_otel_spans_table_name}")
+
+    mlflow.set_experiment(experiment_id=experiment.experiment_id)
 
 
 def log_and_register() -> str:
@@ -110,9 +131,8 @@ def deploy(version: str) -> None:
 def main() -> None:
     mlflow.set_tracking_uri("databricks")
     mlflow.set_registry_uri("databricks-uc")
-    experiment = mlflow.set_experiment(config.EXPERIMENT_PATH)
 
-    link_trace_tables(experiment.experiment_id)
+    ensure_uc_experiment()
     version = log_and_register()
     deploy(version)
 

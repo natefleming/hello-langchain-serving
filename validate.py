@@ -13,13 +13,26 @@ import time
 import uuid
 from typing import Any
 
+import mlflow
 from databricks.sdk import WorkspaceClient
 from mlflow.deployments import get_deploy_client
+from mlflow.entities.trace_location import UnityCatalog
 
 import config
 
 POLL_ATTEMPTS: int = 12
 POLL_INTERVAL_S: int = 10
+
+
+def verify_uc_binding() -> None:
+    """Confirm the experiment stores traces in UC (not legacy experiment storage)."""
+    mlflow.set_tracking_uri("databricks")
+    experiment = mlflow.get_experiment_by_name(config.EXPERIMENT_PATH)
+    if experiment is None:
+        sys.exit(f"FAIL: experiment {config.EXPERIMENT_PATH} does not exist.")
+    if not isinstance(experiment.trace_location, UnityCatalog):
+        sys.exit(f"FAIL: experiment is not bound to UC: {experiment.trace_location}")
+    print(f"UC-bound: {experiment.trace_location.full_otel_spans_table_name}")
 
 
 def live_inference(marker: str) -> str:
@@ -38,11 +51,14 @@ def live_inference(marker: str) -> str:
     return "".join(texts)
 
 
-def trace_landed(client: WorkspaceClient) -> int:
-    """Return the number of spans written in the last 15 minutes."""
+def spans_matching(client: WorkspaceClient, marker: str) -> int:
+    """Count spans whose recorded inputs contain the unique marker for this call.
+
+    ``attributes`` is a VARIANT column, so match against its JSON rendering.
+    """
     sql = (
         f"SELECT COUNT(*) FROM {config.OTEL_SPANS_TABLE} "
-        f"WHERE start_time_unix_nano / 1e9 > unix_timestamp() - 900"
+        f"WHERE to_json(attributes) LIKE '%{marker}%'"
     )
     result = client.statement_execution.execute_statement(
         warehouse_id=config.WAREHOUSE_ID, statement=sql, wait_timeout="30s"
@@ -53,8 +69,9 @@ def trace_landed(client: WorkspaceClient) -> int:
 
 
 def main() -> None:
-    marker = f"OTEL_TEST_{uuid.uuid4().hex[:8].upper()}"
+    verify_uc_binding()
 
+    marker = f"OTEL_TEST_{uuid.uuid4().hex[:8].upper()}"
     answer = live_inference(marker)
     print(f"Endpoint answered: {answer!r}")
     if not answer.strip():
@@ -63,13 +80,13 @@ def main() -> None:
     client = WorkspaceClient(profile=config.PROFILE)
     for attempt in range(1, POLL_ATTEMPTS + 1):
         time.sleep(POLL_INTERVAL_S)
-        count = trace_landed(client)
-        print(f"[{attempt * POLL_INTERVAL_S:>3}s] spans in last 15 min: {count}")
+        count = spans_matching(client, marker)
+        print(f"[{attempt * POLL_INTERVAL_S:>3}s] spans matching {marker}: {count}")
         if count > 0:
-            print(f"PASS: traces are queryable in {config.OTEL_SPANS_TABLE}")
+            print(f"PASS: this call's trace is queryable in {config.OTEL_SPANS_TABLE}")
             return
 
-    sys.exit("FAIL: no trace appeared in the OTel table within the polling window.")
+    sys.exit("FAIL: this call's trace did not appear in the OTel table in time.")
 
 
 if __name__ == "__main__":

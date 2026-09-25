@@ -3,12 +3,11 @@
 This module is what gets logged (via ``mlflow.models.set_model``) and what runs
 inside the Databricks Model Serving endpoint. Two things happen at import time:
 
-1. ``mlflow.langchain.autolog()`` turns on automatic MLflow tracing for the
-   LangChain / LangGraph call graph.
-2. ``mlflow.tracing.set_destination(UCSchemaLocation(...))`` routes the spans to
-   the Unity Catalog OpenTelemetry tables, both locally and on the endpoint, so
-   they are queryable in SQL within seconds of each inference. ``deploy.py``
-   provisions those tables and links the experiment to them once, up front.
+The experiment ``config.EXPERIMENT_PATH`` is bound once (in ``deploy.py``) to a
+Unity Catalog trace location. Here we simply select that experiment and turn on
+``mlflow.langchain.autolog()`` — every trace for the experiment then lands in the
+UC OpenTelemetry tables, both locally and on the serving endpoint. No deprecated
+``set_destination`` call is needed.
 
 The agent itself is a no-tools ``create_agent`` graph wrapped in a thin
 ``ResponsesAgent`` so it presents the interface Databricks serving expects.
@@ -23,17 +22,15 @@ import mlflow
 from databricks_langchain import ChatDatabricks
 from langchain.agents import create_agent
 from langchain_core.messages import BaseMessage
-from mlflow.entities.trace_location import UCSchemaLocation
 from mlflow.pyfunc import ResponsesAgent
 from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
 
 import config
 
-# --- Tracing: autolog captures the graph; send spans to the UC OTel tables. ---
+# --- Tracing: select the UC-bound experiment, then autolog the graph. ---------
+mlflow.set_tracking_uri("databricks")
+mlflow.set_experiment(config.EXPERIMENT_PATH)
 mlflow.langchain.autolog()
-mlflow.tracing.set_destination(
-    UCSchemaLocation(catalog_name=config.TRACE_CATALOG, schema_name=config.TRACE_SCHEMA)
-)
 
 # --- The agent: a Databricks foundation model, no tools. ----------------------
 _LLM = ChatDatabricks(endpoint=config.LLM_ENDPOINT)

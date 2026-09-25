@@ -17,14 +17,19 @@ UC_MODEL: str = "retail_consumer_goods.default.hello_langchain_agent"
 # Serving endpoint name created by databricks.agents.deploy.
 SERVING_ENDPOINT: str = "hello_langchain_agent"
 
-# Unity Catalog schema that backs the OpenTelemetry trace tables. MLflow writes
-# <TRACE_CATALOG>.<TRACE_SCHEMA>.mlflow_experiment_trace_otel_spans (and _otel_logs).
+# Unity Catalog schema that backs the OpenTelemetry trace tables. Binding the
+# experiment to a UnityCatalog trace location (see deploy.py) provisions four Delta
+# tables named <TABLE_PREFIX>_otel_{spans,logs,metrics,annotations} in this schema.
 TRACE_CATALOG: str = "retail_consumer_goods"
 TRACE_SCHEMA: str = "agent_ops_traces"
-OTEL_SPANS_TABLE: str = f"{TRACE_CATALOG}.{TRACE_SCHEMA}.mlflow_experiment_trace_otel_spans"
+TABLE_PREFIX: str = "hello_langchain"
+OTEL_SPANS_TABLE: str = f"{TRACE_CATALOG}.{TRACE_SCHEMA}.{TABLE_PREFIX}_otel_spans"
 
-# MLflow experiment that owns the runs/model logged by deploy.py.
-EXPERIMENT_PATH: str = "/Users/nate.fleming@databricks.com/hello-langchain-serving"
+# MLflow experiment that owns the runs/model and is bound to the UC trace location.
+# A UC trace location is permanent, so this is a fresh experiment (the earlier demo
+# experiment is bound to the older table layout). /Shared keeps it reachable by the
+# service principal the serving endpoint runs as.
+EXPERIMENT_PATH: str = "/Shared/hello-langchain-serving-uc"
 
 # SQL warehouse used to provision the trace tables and run read-back queries.
 WAREHOUSE_ID: str = "d58e5fb998498840"
