@@ -1,0 +1,6 @@
+mlflow==3.10.1
+databricks-langchain==0.19.0
+langchain==1.2.15
+langgraph==1.1.6
+databricks-agents==1.9.3
+databricks-sdk==0.105.0
