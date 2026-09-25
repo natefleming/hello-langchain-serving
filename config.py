@@ -29,5 +29,14 @@ EXPERIMENT_PATH: str = "/Users/nate.fleming@databricks.com/hello-langchain-servi
 # SQL warehouse used to provision the trace tables and run read-back queries.
 WAREHOUSE_ID: str = "d58e5fb998498840"
 
+# Existing service principal (in this secret scope) that the serving endpoint runs
+# as. Reused deliberately so deployment does not create a new SP — the FEVM account
+# is at its user/SP cap, which is why databricks.agents.deploy's auto-provisioned SPs
+# fail. This SP authenticates the LLM call and the trace writes to the OTel tables.
+SECRET_SCOPE: str = "retail_consumer_goods"
+SP_HOST_KEY: str = "RETAIL_AI_DATABRICKS_HOST"
+SP_CLIENT_ID_KEY: str = "RETAIL_AI_DATABRICKS_CLIENT_ID"
+SP_CLIENT_SECRET_KEY: str = "RETAIL_AI_DATABRICKS_CLIENT_SECRET"
+
 # System prompt for the no-tools agent.
 SYSTEM_PROMPT: str = "You are a helpful assistant. Answer concisely."

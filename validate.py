@@ -13,8 +13,8 @@ import time
 import uuid
 from typing import Any
 
-import mlflow
 from databricks.sdk import WorkspaceClient
+from mlflow.deployments import get_deploy_client
 
 import config
 
@@ -24,7 +24,7 @@ POLL_INTERVAL_S: int = 10
 
 def live_inference(marker: str) -> str:
     """Send one request to the serving endpoint and return the answer text."""
-    client = mlflow.deployments.get_deploy_client("databricks")
+    client = get_deploy_client("databricks")
     response: dict[str, Any] = client.predict(
         endpoint=config.SERVING_ENDPOINT,
         inputs={"input": [{"role": "user", "content": f"Reply with exactly: {marker}"}]},
