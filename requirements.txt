@@ -1,4 +1,4 @@
-mlflow[databricks]==3.16.1
+mlflow==3.16.1
 databricks-langchain==0.20.0
 langchain==1.4.2
 langgraph==1.2.12

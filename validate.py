@@ -24,15 +24,22 @@ POLL_ATTEMPTS: int = 12
 POLL_INTERVAL_S: int = 10
 
 
-def verify_uc_binding() -> None:
-    """Confirm the experiment stores traces in UC (not legacy experiment storage)."""
+def resolve_spans_table() -> str:
+    """Confirm the experiment stores traces in UC and return the real spans table.
+
+    The table name is taken from the backend-populated trace location rather than
+    assumed, falling back to the config default only if the backend omits it.
+    """
     mlflow.set_tracking_uri("databricks")
     experiment = mlflow.get_experiment_by_name(config.EXPERIMENT_PATH)
     if experiment is None:
         sys.exit(f"FAIL: experiment {config.EXPERIMENT_PATH} does not exist.")
-    if not isinstance(experiment.trace_location, UnityCatalog):
-        sys.exit(f"FAIL: experiment is not bound to UC: {experiment.trace_location}")
-    print(f"UC-bound: {experiment.trace_location.full_otel_spans_table_name}")
+    location = experiment.trace_location
+    if not isinstance(location, UnityCatalog):
+        sys.exit(f"FAIL: experiment is not bound to UC: {location}")
+    spans_table = location.full_otel_spans_table_name or config.OTEL_SPANS_TABLE
+    print(f"UC-bound spans table: {spans_table}")
+    return spans_table
 
 
 def live_inference(marker: str) -> str:
@@ -51,13 +58,13 @@ def live_inference(marker: str) -> str:
     return "".join(texts)
 
 
-def spans_matching(client: WorkspaceClient, marker: str) -> int:
+def spans_matching(client: WorkspaceClient, spans_table: str, marker: str) -> int:
     """Count spans whose recorded inputs contain the unique marker for this call.
 
     ``attributes`` is a VARIANT column, so match against its JSON rendering.
     """
     sql = (
-        f"SELECT COUNT(*) FROM {config.OTEL_SPANS_TABLE} "
+        f"SELECT COUNT(*) FROM {spans_table} "
         f"WHERE to_json(attributes) LIKE '%{marker}%'"
     )
     result = client.statement_execution.execute_statement(
@@ -69,7 +76,7 @@ def spans_matching(client: WorkspaceClient, marker: str) -> int:
 
 
 def main() -> None:
-    verify_uc_binding()
+    spans_table = resolve_spans_table()
 
     marker = f"OTEL_TEST_{uuid.uuid4().hex[:8].upper()}"
     answer = live_inference(marker)
@@ -80,10 +87,10 @@ def main() -> None:
     client = WorkspaceClient(profile=config.PROFILE)
     for attempt in range(1, POLL_ATTEMPTS + 1):
         time.sleep(POLL_INTERVAL_S)
-        count = spans_matching(client, marker)
+        count = spans_matching(client, spans_table, marker)
         print(f"[{attempt * POLL_INTERVAL_S:>3}s] spans matching {marker}: {count}")
         if count > 0:
-            print(f"PASS: this call's trace is queryable in {config.OTEL_SPANS_TABLE}")
+            print(f"PASS: this call's trace is queryable in {spans_table}")
             return
 
     sys.exit("FAIL: this call's trace did not appear in the OTel table in time.")

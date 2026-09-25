@@ -74,10 +74,12 @@ def ensure_uc_experiment() -> None:
         if not isinstance(bound, UnityCatalog) or (
             bound.catalog_name,
             bound.schema_name,
-        ) != (config.TRACE_CATALOG, config.TRACE_SCHEMA):
+            bound.table_prefix,
+        ) != (config.TRACE_CATALOG, config.TRACE_SCHEMA, config.TABLE_PREFIX):
             raise RuntimeError(
                 f"Experiment {config.EXPERIMENT_PATH} is bound to {bound}, not the "
-                f"expected UC location {config.TRACE_CATALOG}.{config.TRACE_SCHEMA}."
+                f"expected UC location {config.TRACE_CATALOG}.{config.TRACE_SCHEMA} "
+                f"with prefix {config.TABLE_PREFIX!r}."
             )
         print(f"Reusing experiment bound to {bound.full_otel_spans_table_name}")
 
