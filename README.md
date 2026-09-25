@@ -45,6 +45,16 @@ DATABRICKS_CONFIG_PROFILE=fevm python deploy.py
 DATABRICKS_CONFIG_PROFILE=fevm python validate.py
 ```
 
+## Deployment note
+
+`deploy.py` uses **plain model serving** (`serving_endpoints.create_and_wait`) rather than
+`databricks.agents.deploy`. On the FEVM demo account, `agents.deploy` fails because it
+auto-provisions several service principals (review app, feedback model, on-behalf-of auth)
+and the account is at its user/SP cap (`RESOURCE_EXHAUSTED`). Instead the endpoint runs as an
+**existing** service principal, whose OAuth credentials are injected from the
+`retail_consumer_goods` secret scope via `environment_vars` — so no new SP is created. That
+SP authenticates both the LLM call and the trace writes to the OTel tables.
+
 ## Query the traces
 
 ```sql
